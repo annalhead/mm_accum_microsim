@@ -1,0 +1,623 @@
+---
+title: "Hazard plots with left censored data"
+output: html_notebook
+---
+
+This file plots the baseline hazards for each of the 7 transitions of interest against the 
+intercept-only parametric distributions and compares AIC values for the fits. 
+For each transition, Kaplan-Meier curves are also plotted against the parametric intercept-only
+curves of the best-fitting distribution(s) for visual inspection. 
+
+based on bshazard: A Flexible Tool for Nonparametric Smoothing of the Hazard Function
+https://journal.r-project.org/archive/2014/RJ-2014-028/RJ-2014-028.pdf 
+
+parametric distributions from: # from https://devinincerti.com/2019/06/18/parametric_survival.html
+
+
+```{r}
+library(data.table)
+data.table::setDTthreads(10) #this is so that don't use all the processors
+library(fst)
+fst::threads_fst(10)
+library(qs)
+library(flexsurv)
+library(ggplot2)
+library(future.apply)
+library(future)
+library(splines)
+library(ggthemes)
+options(future.fork.enable = TRUE) # TODO remove for production
+options(future.rng.onMisuse = "ignore") # Remove false warning
+plan(multicore(workers = 10))
+
+data_dir_PM <-
+  function(x = character(0))
+    paste0("/mnt/", Sys.info()[["user"]],
+           "/UoL/CPRD2019mm/forthesis/", x)
+
+data_dir_Diseaselist <-
+  function(x = character(0))
+    paste0("/mnt/", Sys.info()[["user"]],
+           "/UoL/CPRD2019mm/Disease_lists/", x)
+
+
+data_dir_lookup <-
+  function(x = character(0))
+    paste0("/mnt/", Sys.info()[["user"]],
+           "/UoL/CPRD2019mm/Dictionaries etc/", x)
+
+output_path_plot <- 
+     function(x = character(0))
+    paste0("/mnt/", Sys.info()[["user"]],
+           "/UoL/CPRD2019mm/forthesis/bshazplot/", x)
+
+myDTmstate_age <- read_fst(data_dir_PM("accumDTmstate_age.fst"), as.data.table = TRUE)[
+  yob >= 1919 & yob <= 1986 & imd!= "" & region != "" & gender != "I"]
+
+
+
+
+
+dists <- c("exp", "weibull", "gompertz", "gamma",
+           "lognormal", "llogis", "gengamma")
+dists_long <- c("Exponential", "Weibull (AFT)",
+                "Gompertz", "Gamma", "Lognormal", "Log-logistic",
+                "Generalized gamma")
+n_dists <- length(dists)
+
+foo <- function(dist, data) {
+flexsurvreg(Surv(Tstart2, Tstop2, status) ~ 1,
+              data = data,
+              dist = dist)
+}
+fooa <- function(dist, data) {
+  flexsurvreg(Surv(Tstart2, Tstop2, status) ~ log(yob),
+              data = data,
+              dist = dist)
+}
+
+time10 <- c(0,10,20,30,40,50,60,70,80)
+theme_set(new = theme_few())
+theme_update(legend.position="bottom")
+```
+
+
+# T1 healthy -> 1 cond
+```{r, warning=FALSE, message=FALSE}
+library(bshazard)
+j <- 1L
+
+models <- future_lapply(dists, foo, myDTmstate_age[trans == j])
+AICs <- sapply(models, `[[`, "AIC")
+names(AICs) <- dists
+sort(AICs)
+names(sort(AICs)[1])
+args(paste0("d", names(sort(AICs)[1]))) #gengamma
+parametric_haz <- vector(mode = "list", length = length(dists))
+for (i in 1:length(dists)){
+  parametric_haz[[i]] <- summary(models[[i]], type = "hazard",
+                                 ci = FALSE, tidy = TRUE)
+  parametric_haz[[i]]$method <- dists_long[i]
+}
+parametric_haz <- rbindlist(parametric_haz)
+
+
+bs_haz_est <- bshazard(Surv(Tstart2, Tstop2, status) ~ 1, 
+                              data = myDTmstate_age[trans == j])
+
+bs_haz <- data.table(time = bs_haz_est$time,
+                         est = bs_haz_est$hazard,
+                         method = "B-spline hazard")
+haz <- rbind(bs_haz, parametric_haz)
+haz[, method := factor(method,
+                       levels = c("B-spline hazard",
+                                  dists_long))]
+n_dists <- length(dists)
+ggplot(haz, aes(x = time, y = est, col = method, linetype = method)) +
+  geom_line() +
+  xlab("Years") + ylab("Hazard") +
+  scale_colour_manual(name = "",
+                      values = c("black", rainbow(n_dists))) +
+  scale_linetype_manual(name = "",
+                        values = c(1, rep_len(2:6, n_dists))) 
+  ggsave(filename = output_path_plot(paste0("bshaz_lc_t", j,".png",sep="")))
+
+
+kmfit <- survfit(Surv(Tstart2, Tstop2, status) ~ 1, 
+                 data = myDTmstate_age[trans == j])
+
+summary(kmfit, times = time10)
+myDTmstate_age[trans == j, .(totalatrisk = .N, totalevents = sum(status ==1) )]
+
+```
+## Fitted survival curves
+```{r}
+plot(models[[3]], xlab = "Age in years", ylab = "Overall survival probability")
+lines(models[[7]], col = "blue")
+legend("bottomleft",c("gompertz", "gengamma"),
+       col = c("red", "blue"), lty = 1)
+title("Transition from healthy -> 1 condition, \n KM curve & intercept only parametric models")
+
+```
+
+# T2 healthy -> Death
+```{r, warning=FALSE}
+j <- 2L
+
+models <- future_lapply(dists, foo, myDTmstate_age[trans == j])
+AICs <- sapply(models, `[[`, "AIC")
+names(AICs) <- dists
+sort(AICs)
+names(sort(AICs)[1])
+args(paste0("d", names(sort(AICs)[1]))) #THIS HAS CHANGED TO GENGAMMA...
+#BUT, the Gompertz fits better in the plots later on, so Gompertz probably makes more sense
+
+parametric_haz <- vector(mode = "list", length = length(dists))
+for (i in 1:length(dists)){
+  parametric_haz[[i]] <- summary(models[[i]], type = "hazard",
+                                 ci = FALSE, tidy = TRUE)
+  parametric_haz[[i]]$method <- dists_long[i]
+}
+parametric_haz <- rbindlist(parametric_haz)
+
+bs_haz_est <- bshazard(Surv(Tstart2, Tstop2, status) ~ 1, 
+                              data = myDTmstate_age[trans == j])
+
+bs_haz <- data.table(time = bs_haz_est$time,
+                         est = bs_haz_est$hazard,
+                         method = "B-spline hazard")
+haz <- rbind(bs_haz, parametric_haz)
+haz[, method := factor(method,
+                       levels = c("B-spline hazard",
+                                  dists_long))]
+n_dists <- length(dists)
+ggplot(haz, aes(x = time, y = est, col = method, linetype = method)) +
+  geom_line() +
+  xlab("Years") + ylab("Hazard") +
+  scale_colour_manual(name = "",
+                      values = c("black", rainbow(n_dists))) +
+  scale_linetype_manual(name = "",
+                        values = c(1, rep_len(2:6, n_dists))) 
+ggsave(filename = output_path_plot(paste0("bshaz_lc_t", j,".png",sep="")))
+
+
+kmfit <- survfit(Surv(Tstart2, Tstop2, status) ~ 1, 
+                 data = myDTmstate_age[trans == j])
+
+summary(kmfit, times = time10)
+myDTmstate_age[trans == j, .(totalatrisk = .N, totalevents = sum(status ==1) )]
+
+
+```
+
+## Fitted survival curves
+```{r}
+plot(models[[3]], xlab = "Age in years", ylab = "Overall survival probability")
+lines(models[[7]], col = "blue")
+legend("bottomleft",c("gompertz", "gengamma"),
+       col = c("red", "blue"), lty = 1)
+title("Transition from healthy -> death, \n KM curve & intercept only parametric models")
+
+```
+
+# T3 1 Cond -> BMM
+```{r, warning=FALSE}
+j <- 3L
+
+models <- future_lapply(dists, foo, myDTmstate_age[trans == j])
+AICs <- sapply(models, `[[`, "AIC")
+names(AICs) <- dists
+print(sort(AICs))
+names(sort(AICs)[1])
+args(paste0("d", names(sort(AICs)[1]))) #gengamma
+
+parametric_haz <- vector(mode = "list", length = length(dists))
+for (i in 1:length(dists)){
+  parametric_haz[[i]] <- summary(models[[i]], type = "hazard",
+                                 ci = FALSE, tidy = TRUE)
+  parametric_haz[[i]]$method <- dists_long[i]
+}
+parametric_haz <- rbindlist(parametric_haz)
+
+bs_haz_est <- bshazard(Surv(Tstart2, Tstop2, status) ~ 1, 
+                              data = myDTmstate_age[trans == j])
+
+bs_haz <- data.table(time = bs_haz_est$time,
+                         est = bs_haz_est$hazard,
+                         method = "B-spline hazard")
+haz <- rbind(bs_haz, parametric_haz)
+haz[, method := factor(method,
+                       levels = c("B-spline hazard",
+                                  dists_long))]
+n_dists <- length(dists)
+ggplot(haz, aes(x = time, y = est, col = method, linetype = method)) +
+  geom_line() +
+  xlab("Years") + ylab("Hazard") +
+  scale_colour_manual(name = "",
+                      values = c("black", rainbow(n_dists))) +
+  scale_linetype_manual(name = "",
+                        values = c(1, rep_len(2:6, n_dists))) 
+  ggsave(filename = output_path_plot(paste0("bshaz_lc_t", j,".png",sep="")))
+
+
+kmfit <- survfit(Surv(Tstart2, Tstop2, status) ~ 1, 
+                 data = myDTmstate_age[trans == j])
+
+summary(kmfit, times = time10)
+myDTmstate_age[trans == j, .(totalatrisk = .N, totalevents = sum(status ==1) )]
+
+
+```
+
+
+## Fitted survival curves
+```{r}
+plot(models[[3]], xlab = "Age in years", ylab = "Overall survival probability")
+lines(models[[7]], col = "blue")
+legend("bottomleft",c("gompertz", "gengamma"),
+       col = c("red", "blue"), lty = 1)
+title("Transition from 1 cond -> bmm, \n KM curve & intercept only parametric models")
+
+```
+
+# T4 1 Cond -> Death
+```{r, warning=FALSE }
+j <- 4L
+
+models <- future_lapply(dists, foo, myDTmstate_age[trans == j])
+AICs <- sapply(models, `[[`, "AIC")
+names(AICs) <- dists
+print(sort(AICs))
+names(sort(AICs)[1])
+args(paste0("d", names(sort(AICs)[1]))) #gengamma, but maybe affected by small numbers on the right
+#gengamma  gompertz   weibull    llogis     gamma lognormal       exp 
+# 26177.03  35242.78  36205.01  36478.27  37016.19  37867.57  40690.19 
+
+parametric_haz <- vector(mode = "list", length = length(dists))
+for (i in 1:length(dists)){
+  parametric_haz[[i]] <- summary(models[[i]], type = "hazard",
+                                 ci = FALSE, tidy = TRUE)
+  parametric_haz[[i]]$method <- dists_long[i]
+}
+parametric_haz <- rbindlist(parametric_haz)
+
+bs_haz_est <- bshazard(Surv(Tstart2, Tstop2, status) ~ 1, 
+                              data = myDTmstate_age[trans == j])
+
+bs_haz <- data.table(time = bs_haz_est$time,
+                         est = bs_haz_est$hazard,
+                         method = "B-spline hazard")
+haz <- rbind(bs_haz, parametric_haz)
+haz[, method := factor(method,
+                       levels = c("B-spline hazard",
+                                  dists_long))]
+n_dists <- length(dists)
+ggplot(haz, aes(x = time, y = est, col = method, linetype = method)) +
+  geom_line() +
+  xlab("Years") + ylab("Hazard") +
+  scale_colour_manual(name = "",
+                      values = c("black", rainbow(n_dists))) +
+  scale_linetype_manual(name = "",
+                        values = c(1, rep_len(2:6, n_dists))) 
+ ggsave(filename = output_path_plot(paste0("bshaz_lc_t", j,".png",sep="")))
+
+
+kmfit <- survfit(Surv(Tstart2, Tstop2, status) ~ 1, 
+                 data = myDTmstate_age[trans == j])
+
+summary(kmfit, times = time10)
+myDTmstate_age[trans == j, .(totalatrisk = .N, totalevents = sum(status ==1) )]
+
+
+```
+
+## Fitted survival curves
+```{r}
+plot(models[[3]], xlab = "Age in years", ylab = "Overall survival probability")
+lines(models[[7]], col = "blue")
+legend("bottomleft",c("gompertz", "gengamma"),
+       col = c("red", "blue"), lty = 1)
+title("Transition from 1 cond -> death, \n KM curve & intercept only parametric models")
+
+```
+
+
+# T5 BMM -> CMM
+```{r, warning=FALSE }
+j <- 5L
+
+models <- future_lapply(dists, foo, myDTmstate_age[trans == j])
+AICs <- sapply(models, `[[`, "AIC")
+names(AICs) <- dists
+sort(AICs)
+names(sort(AICs)[1])
+args(paste0("d", names(sort(AICs)[1]))) #gengamma
+
+parametric_haz <- vector(mode = "list", length = length(dists))
+for (i in 1:length(dists)){
+  parametric_haz[[i]] <- summary(models[[i]], type = "hazard",
+                                 ci = FALSE, tidy = TRUE)
+  parametric_haz[[i]]$method <- dists_long[i]
+}
+parametric_haz <- rbindlist(parametric_haz)
+
+bs_haz_est <- bshazard(Surv(Tstart2, Tstop2, status) ~ 1, 
+                              data = myDTmstate_age[trans == j])
+
+bs_haz <- data.table(time = bs_haz_est$time,
+                         est = bs_haz_est$hazard,
+                         method = "B-spline hazard")
+haz <- rbind(bs_haz, parametric_haz)
+haz[, method := factor(method,
+                       levels = c("B-spline hazard",
+                                  dists_long))]
+n_dists <- length(dists)
+ggplot(haz, aes(x = time, y = est, col = method, linetype = method)) +
+  geom_line() +
+  xlab("Years") + ylab("Hazard") +
+  scale_colour_manual(name = "",
+                      values = c("black", rainbow(n_dists))) +
+  scale_linetype_manual(name = "",
+                        values = c(1, rep_len(2:6, n_dists))) 
+  ggsave(filename = output_path_plot(paste0("bshaz_lc_t", j,".png",sep="")))
+
+
+kmfit <- survfit(Surv(Tstart2, Tstop2, status) ~ 1, 
+                 data = myDTmstate_age[trans == j])
+
+summary(kmfit, times = time10)
+myDTmstate_age[trans == j, .(totalatrisk = .N, totalevents = sum(status ==1) )]
+
+
+```
+
+## Fitted survival curves
+```{r}
+plot(models[[3]], xlab = "Age in years", ylab = "Overall survival probability")
+lines(models[[7]], col = "blue")
+legend("bottomleft",c("gompertz", "gengamma"),
+       col = c("red", "blue"), lty = 1)
+title("Transition from bmm -> cmm, \n KM curve & intercept only parametric models")
+
+# the gompertz does look better though..
+```
+
+
+# T6 BMM -> Death
+```{r, warning=FALSE }
+j <- 6L
+
+models <- future_lapply(dists, foo, myDTmstate_age[trans == j])
+AICs <- sapply(models, `[[`, "AIC")
+names(AICs) <- dists
+sort(AICs)
+names(sort(AICs)[1])
+args(paste0("d", names(sort(AICs)[1]))) #gompertz
+
+parametric_haz <- vector(mode = "list", length = length(dists))
+for (i in 1:length(dists)){
+  parametric_haz[[i]] <- summary(models[[i]], type = "hazard",
+                                 ci = FALSE, tidy = TRUE)
+  parametric_haz[[i]]$method <- dists_long[i]
+}
+parametric_haz <- rbindlist(parametric_haz)
+
+bs_haz_est <- bshazard(Surv(Tstart2, Tstop2, status) ~ 1, 
+                              data = myDTmstate_age[trans == j])
+
+bs_haz <- data.table(time = bs_haz_est$time,
+                         est = bs_haz_est$hazard,
+                         method = "B-spline hazard")
+haz <- rbind(bs_haz, parametric_haz)
+haz[, method := factor(method,
+                       levels = c("B-spline hazard",
+                                  dists_long))]
+n_dists <- length(dists)
+ggplot(haz, aes(x = time, y = est, col = method, linetype = method)) +
+  geom_line() +
+  xlab("Years") + ylab("Hazard") +
+  scale_colour_manual(name = "",
+                      values = c("black", rainbow(n_dists))) +
+  scale_linetype_manual(name = "",
+                        values = c(1, rep_len(2:6, n_dists))) 
+  ggsave(filename = output_path_plot(paste0("bshaz_lc_t", j,".png",sep="")))
+
+
+kmfit <- survfit(Surv(Tstart2, Tstop2, status) ~ 1, 
+                 data = myDTmstate_age[trans == j])
+
+summary(kmfit, times = time10)
+myDTmstate_age[trans == j, .(totalatrisk = .N, totalevents = sum(status ==1) )]
+
+```
+
+## Fitted survival curves
+```{r}
+plot(models[[3]], xlab = "Age in years", ylab = "Overall survival probability")
+lines(models[[7]], col = "blue")
+legend("bottomleft",c("gompertz", "gengamma"),
+       col = c("red", "blue"), lty = 1)
+title("Transition from bmm -> death, \n KM curve & intercept only parametric models")
+
+```
+
+
+
+# T7 CMM -> Death
+```{r, warning=FALSE }
+j <- 7L
+AICs <- sapply(models, `[[`, "AIC")
+names(AICs) <- dists
+sort(AICs)
+names(sort(AICs)[1])
+args(paste0("d", names(sort(AICs)[1])))
+
+models <- future_lapply(dists, foo, myDTmstate_age[trans == j]) #gompertz
+
+parametric_haz <- vector(mode = "list", length = length(dists))
+for (i in 1:length(dists)){
+  parametric_haz[[i]] <- summary(models[[i]], type = "hazard",
+                                 ci = FALSE, tidy = TRUE)
+  parametric_haz[[i]]$method <- dists_long[i]
+}
+parametric_haz <- rbindlist(parametric_haz)
+
+bs_haz_est <- bshazard(Surv(Tstart2, Tstop2, status) ~ 1, 
+                              data = myDTmstate_age[trans == j])
+
+bs_haz <- data.table(time = bs_haz_est$time,
+                         est = bs_haz_est$hazard,
+                         method = "B-spline hazard")
+haz <- rbind(bs_haz, parametric_haz)
+haz[, method := factor(method,
+                       levels = c("B-spline hazard",
+                                  dists_long))]
+n_dists <- length(dists)
+ggplot(haz, aes(x = time, y = est, col = method, linetype = method)) +
+  geom_line() +
+  xlab("Years") + ylab("Hazard") +
+  scale_colour_manual(name = "",
+                      values = c("black", rainbow(n_dists))) +
+  scale_linetype_manual(name = "",
+                        values = c(1, rep_len(2:6, n_dists))) 
+  ggsave(filename = output_path_plot(paste0("bshaz_lc_t", j,".png",sep="")))
+
+
+kmfit <- survfit(Surv(Tstart2, Tstop2, status) ~ 1, 
+                 data = myDTmstate_age[trans == j])
+
+summary(kmfit, times = time10)
+myDTmstate_age[trans == j, .(totalatrisk = .N, totalevents = sum(status ==1) )]
+
+
+```
+
+## Fitted survival curves
+```{r}
+plot(models[[3]], xlab = "Age in years", ylab = "Overall survival probability")
+lines(models[[7]], col = "blue")
+legend("bottomleft",c("gompertz", "gengamma"),
+       col = c("red", "blue"), lty = 1)
+title("Transition from cmm -> death, \n KM curve & intercept only parametric models")
+
+```
+
+
+# T1 healthy -> 1 cond -h18
+```{r, warning=FALSE, message=FALSE}
+library(bshazard)
+j <- 1L
+myDTmstate_age[from ==1, Tstart2 := 0]
+models <- future_lapply(dists, foo, myDTmstate_age[trans == j])
+AICs <- sapply(models, `[[`, "AIC")
+names(AICs) <- dists
+sort(AICs)
+names(sort(AICs)[1])
+args(paste0("d", names(sort(AICs)[1]))) #gengamma
+
+parametric_haz <- vector(mode = "list", length = length(dists))
+for (i in 1:length(dists)){
+  parametric_haz[[i]] <- summary(models[[i]], type = "hazard",
+                                 ci = FALSE, tidy = TRUE)
+  parametric_haz[[i]]$method <- dists_long[i]
+}
+parametric_haz <- rbindlist(parametric_haz)
+
+
+bs_haz_est <- bshazard(Surv(Tstart2, Tstop2, status) ~ 1, 
+                              data = myDTmstate_age[trans == j])
+
+bs_haz <- data.table(time = bs_haz_est$time,
+                         est = bs_haz_est$hazard,
+                         method = "B-spline hazard")
+haz <- rbind(bs_haz, parametric_haz)
+haz[, method := factor(method,
+                       levels = c("B-spline hazard",
+                                  dists_long))]
+n_dists <- length(dists)
+ggplot(haz, aes(x = time, y = est, col = method, linetype = method)) +
+  geom_line() +
+  xlab("Years") + ylab("Hazard") +
+  scale_colour_manual(name = "",
+                      values = c("black", rainbow(n_dists))) +
+  scale_linetype_manual(name = "",
+                        values = c(1, rep_len(2:6, n_dists))) 
+  ggsave(filename = output_path_plot(paste0("bshaz_lc_h_18_t", j,".png",sep="")))
+
+
+kmfit <- survfit(Surv(Tstart2, Tstop2, status) ~ 1, 
+                 data = myDTmstate_age[trans == j])
+
+summary(kmfit, times = time10)
+myDTmstate_age[trans == j, .(totalatrisk = .N, totalevents = sum(status ==1) )]
+
+```
+
+## Fitted survival curves
+```{r}
+plot(models[[3]], xlab = "Age in years", ylab = "Overall survival probability")
+lines(models[[7]], col = "blue")
+legend("bottomleft",c("gompertz", "gengamma"),
+       col = c("red", "blue"), lty = 1)
+title("Transition from healthy -> 1condition (start at 18), \n KM curve & intercept only parametric models")
+
+```
+
+# T2 healthy -> Death - h18
+```{r, warning=FALSE}
+j <- 2L
+
+models <- future_lapply(dists, foo, myDTmstate_age[trans == j])
+AICs <- sapply(models, `[[`, "AIC")
+names(AICs) <- dists
+sort(AICs)
+names(sort(AICs)[1])
+args(paste0("d", names(sort(AICs)[1]))) #gompertz
+
+parametric_haz <- vector(mode = "list", length = length(dists))
+for (i in 1:length(dists)){
+  parametric_haz[[i]] <- summary(models[[i]], type = "hazard",
+                                 ci = FALSE, tidy = TRUE)
+  parametric_haz[[i]]$method <- dists_long[i]
+}
+parametric_haz <- rbindlist(parametric_haz)
+
+bs_haz_est <- bshazard(Surv(Tstart2, Tstop2, status) ~ 1, 
+                              data = myDTmstate_age[trans == j])
+
+bs_haz <- data.table(time = bs_haz_est$time,
+                         est = bs_haz_est$hazard,
+                         method = "B-spline hazard")
+haz <- rbind(bs_haz, parametric_haz)
+haz[, method := factor(method,
+                       levels = c("B-spline hazard",
+                                  dists_long))]
+n_dists <- length(dists)
+ggplot(haz, aes(x = time, y = est, col = method, linetype = method)) +
+  geom_line() +
+  xlab("Years") + ylab("Hazard") +
+  scale_colour_manual(name = "",
+                      values = c("black", rainbow(n_dists))) +
+  scale_linetype_manual(name = "",
+                        values = c(1, rep_len(2:6, n_dists))) 
+  ggsave(filename = output_path_plot(paste0("bshaz_lc_h_18_t", j,".png",sep="")))
+
+
+kmfit <- survfit(Surv(Tstart2, Tstop2, status) ~ 1, 
+                 data = myDTmstate_age[trans == j])
+
+summary(kmfit, times = time10)
+myDTmstate_age[trans == j, .(totalatrisk = .N, totalevents = sum(status ==1) )]
+
+
+```
+
+## Fitted survival curves
+```{r}
+plot(models[[3]], xlab = "Age in years", ylab = "Overall survival probability")
+lines(models[[7]], col = "blue")
+legend("bottomleft",c("gompertz", "gengamma"),
+       col = c("red", "blue"), lty = 1)
+title("Transition from healthy -> death (start at 18), \n KM curve & intercept only parametric models")
+
+```
