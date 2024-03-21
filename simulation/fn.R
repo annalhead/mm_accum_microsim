@@ -44,6 +44,7 @@ fwrite_safe <- function(x,
 # Reading in & preparing the simulant population
 read_patients <- function(){
   patients <- read_fst(input_path("cohtab_ONS2019_indage_1pc_30proj.fst"), as.data.table = T)
+# patients <- read_fst(project_path("cohtab_ONS2019_indage_1pc_30proj_alt.fst"), as.data.table = T)
   patients[,  c( "cohortnum", "cohortnum2") := NULL]
   patients <- patients[yob >= 1919]
   patients[, init_state := factor(state_id,
@@ -63,6 +64,7 @@ read_patients <- function(){
 # Reading in the lookup table
 read_ll <- function(){
   ll <- read_fst(input_path("state_duration_lookup_bcONS_DEV10se_cap110.fst"), as.data.table = T)
+  #ll <- read_fst(project_path("state_duration_lookup_bcONS_DEV10se_cap110_alt.fst"), as.data.table = T)
   ll[, birthcohortONS := droplevels(birthcohortONS)]
   setnames(ll, "birthcohortONS", "bc")
   setkey(ll,ageenter,gender, imd, region,  bc, quantile) # key on all cols except t1-7, s1-7 quantiles
@@ -137,10 +139,11 @@ postprocess <- function(pop, y10 = FALSE) {
     pop[, `:=` (
       rownum = NULL,
       max_age =
-        ageenter + healthy + incCond + bmm + cmm
+        ageenter + healthy + incCond + bmm + cmm,
+      yob = yob + 0.5 # this is so that anything happens in the first 6 months counts as happening in the following year
     )]
     pop[, max_year := yob + max_age][
-      , year_max_year := as.integer(max_year)]#[, max_year := NULL]
+      , year_max_year := as.integer(round(max_year))]#[, max_year := NULL]
     pop[init_state == "Healthy" & #got to start healthy
           last_state != "Healthy", #and not die healthy
         year_incCond := ageenter + healthy + yob]
@@ -154,7 +157,6 @@ postprocess <- function(pop, y10 = FALSE) {
     ]
   }
 }
-
 
 
 
@@ -197,7 +199,91 @@ run_sim <- function(myDT, lu_tab, startseed){
 }
 
 
+bl_sim <- function(i){
+  sim_output <- run_sim(patients, ll, 41L + i)
+  sim_output[, mc := i]
+  # fwrite(sim_output, outpt_pth(paste0("RAW/", scenario, "_sim_output_mc",i,".csv.gz")))
 
+
+
+  pats <- mk_pnl(sim_output, tt)
+  rm(sim_output)
+  gc()
+  tab <- pats[,
+              .(bl_newcases = sum(state_BMM  == 1L),
+                bl_allcases = sum(state_BMM != 0L),
+                bl_Npop = .N),
+              keyby = outstrata]
+
+  #absorb_dt(tab, bl_tab) #adding in the baseline
+
+
+  #incd <- inctab[, cumN := cumsum(N), keyby = outstrata_cml][year == 2049, .(mc, imd, cumN)]
+  #agegroup5yfn(inctabtmp)
+  #rm(inctab)
+  gc()
+  #fwrite_safe(inctab, outpt_pth(paste0(scenario,"_cumlincd.csv.gz")), append = TRUE)
+  print(paste0("completed iteration #",i))
+  tab
+}
+
+
+scenario_sim <- function(i){
+  sim_output <- run_sim(patients, ll, 41L + i)
+  sim_output[, mc := i]
+  # fwrite(sim_output, outpt_pth(paste0("RAW/", scenario, "_sim_output_mc",i,".csv.gz")))
+
+
+
+  pats <- mk_pnl(sim_output, tt)
+  rm(sim_output)
+  gc()
+  tab <- pats[,
+              .(newcases = sum(state_BMM  == 1L),
+                allcases = sum(state_BMM != 0L),
+                Npop = .N),
+              keyby = outstrata]
+
+  absorb_dt(tab, bl_tab) #adding in the baseline
+
+  tab <- tab[, `:=` (cpp = bl_newcases - newcases, cypp = bl_allcases - allcases, Npop_diff =  Npop - bl_Npop)][
+    , `:=` (cml_cpp = cumsum(cpp), cml_cypp = cumsum(cypp), cuml_Npop_diff = cumsum(Npop_diff)), keyby = outstrata_cml]#[
+  # year == 2049, .(mc, imd, cml_cpp, cml_cypp)]
+
+  #incd <- inctab[, cumN := cumsum(N), keyby = outstrata_cml][year == 2049, .(mc, imd, cumN)]
+  #agegroup5yfn(inctabtmp)
+  #rm(inctab)
+  gc()
+  #fwrite_safe(inctab, outpt_pth(paste0(scenario,"_cumlincd.csv.gz")), append = TRUE)
+  print(paste0("completed iteration #",i))
+  tab
+}
+
+
+# Make a panel - initial year
+mk_pnl_intyr <- function(data){
+  data <- copy(data)
+  data[init_state == "Healthy",
+       `:=`(state_incCond = 0L,
+            state_BMM = 0L,
+            state_CMM = 0L)]
+  data[init_state == "IncCond",
+       `:=`(state_incCond = 2L,
+            state_BMM = 0L,
+            state_CMM = 0L)]
+  data[init_state == "BMM",
+       `:=`(state_incCond = 2L,
+            state_BMM = 2L,
+            state_CMM = 0L)]
+  data[init_state == "CMM",
+       `:=`(state_incCond = 2L,
+            state_BMM = 2L,
+            state_CMM = 2L)]
+  data[, `:=` (year = init_year,
+               new_pid = 1L)][
+                 , c("bc", "ageenter", "init_state")]
+  data
+}
 
 # Make a panel
 mk_pnl <- function(data, tt){
@@ -207,22 +293,22 @@ mk_pnl <- function(data, tt){
   gc()
   yrs <- c("year_incCond", "year_BMM", "year_CMM", "max_year")
   for(col in yrs)
-    set(data, j = col, value = as.integer(data[[col]]))
+    set(data, j = col, value = as.integer(round(data[[col]])))
   rm(yrs)
 
   setkey(data, mc, patient_id)
 
   #THIS IS SLOW
   pats <- data[tt,
-               on = c("init_year  <= y", "year_max_year >= y")]
+               on = c("init_year  < y", "year_max_year >= y")]
   na.omit(pats, cols = "patient_id")
-  pats[, c("init_year", "year_max_year") := NULL] #this year_max_year gets capped at 2049
+  pats[, c("init_year", "year_max_year") := NULL] #this year_max_year gets capped at 2050
   gc()
 
 #this takes some time, but isn't horrible
   setkey(pats, mc, patient_id, year)
   pats[, `:=` (
-    age = year - yob,
+    age = year - as.integer(yob), #need age to be a whole number - age at end of year ,
     state_incCond = ifelse(year_incCond < year | init_state != "Healthy", 2L,
       ifelse(year_incCond == year, 1L,
              0L)),
@@ -234,7 +320,8 @@ mk_pnl <- function(data, tt){
   pats[is.na(state_incCond), state_incCond := 0L ]
   pats[is.na(state_BMM), state_BMM := 0L ]
   pats[is.na(state_CMM), state_CMM := 0L ]
-  pats[, c("init_state", "year_incCond", "year_BMM", "year_CMM") := NULL]
+  pats[, c("init_state", "year_incCond", "year_BMM", "year_CMM") := NULL][
+    , new_pid := 0L]
   gc()
   pats
 }
@@ -242,17 +329,17 @@ mk_pnl <- function(data, tt){
 
 #Make a prevalence summary table
 mk_prevtab <- function(data, outstrata){
-  rbind(data[,
+  rbind(data[died == 0L,
              .(N = sum(state_incCond  != 0L), atrisk = .N),
                #outcome = sum(state_incCond  != 0L) /.N *100),
              keyby = outstrata][
                , state := "IncCond"],
-        data[,
+        data[died == 0L,
              .(N = sum(state_BMM  != 0L), atrisk = .N),
               # outcome = sum(state_BMM  != 0L) /.N *100),
              keyby = outstrata][
                , state := "BMM"],
-        data[,
+        data[died == 0L,
              .(N = sum(state_CMM  != 0L), atrisk = .N),
               # outcome = sum(state_CMM  != 0L) /.N *100),
              keyby = outstrata][
@@ -262,47 +349,49 @@ mk_prevtab <- function(data, outstrata){
 
 # Make an incidence summary table
 mk_inctab <- function(data, outstrata){
-  rbind(data[,
+  rbind(data[new_pid != 1,
                      .(N = sum(state_incCond  == 1L), atrisk = sum(state_incCond  != 2L) ),
                      # outcome = sum(state_incCond  == 1L) /sum(state_incCond  != 2L) *10000),
                      keyby = outstrata][
                        , state := "IncCond"],
-        data[,
+        data[new_pid != 1,
                      .(N = sum(state_BMM  == 1L), atrisk = sum(state_BMM  != 2L)),
                      #outcome = sum(state_BMM  == 1L) /sum(state_BMM  != 2L) *10000),
                      keyby = outstrata][
                        , state := "BMM"],
-        data[,
+        data[new_pid != 1,
                      .(N = sum(state_CMM  == 1L), atrisk = sum(state_CMM  != 2L)),
                      #outcome = sum(state_CMM  == 1L) /sum(state_CMM  != 2L) *10000),
                      keyby = outstrata][
                        , state := "CMM"])
   }
 
-# Make a case fatality summary table
+# Make a case fatality summary table - this does take some time
 mk_cftab <- function(data, outstrata){
-  rbind(data[,
+  rbind(data[new_pid != 1,
                     .(N = sum(max_year  == year), atrisk = .N ),
                     keyby = outstrata][
                       , state := "Overall"],
-        data[,
+        data[new_pid != 1,
                     .(N = sum(max_year  == year & state_incCond == 0), atrisk = sum(state_incCond == 0L) ),
                     keyby = outstrata][
                       , state := "Healthy"],
-        data[,
+        data[new_pid != 1,
                     .(N = sum(max_year == year & state_incCond  != 0L), atrisk = sum(state_incCond  != 0L ) ),
                     keyby = outstrata][
                       , state := "IncCond"],
-        data[,
+        data[new_pid != 1,
                     .(N = sum(max_year  == year & state_BMM  != 0L), atrisk = sum(state_BMM  != 0L)),
                     keyby = outstrata][
                       , state := "BMM"],
-        data[,
+        data[new_pid != 1,
                     .(N = sum(max_year  == year & state_CMM  != 0L), atrisk = sum(state_CMM  != 0L)),
                     keyby = outstrata][
                       , state := "CMM"])
 }
 
+
+# Functions for factors etc.
 
 fn_state <- function(data){
   data[, state := factor(state,
@@ -422,7 +511,7 @@ setkeyv(dt, setdiff(outstrata, "mc")) #setkeyv is because the col names are in "
 
 
 
-process_results <- function(){
+process_results <- function(i){
   sim_output <- run_sim(patients, ll, 41L + i)
   sim_output[, mc := i]
   print(paste0("completed iteration #",i))
