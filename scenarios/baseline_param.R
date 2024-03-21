@@ -21,6 +21,8 @@ library(CKutils)
 library(scales)
 library(cowplot)
 
+scenario <- "baseline_param"
+
 #uncertainty intervals for output
 prbl <- c( 0.5, 0.25, 0.75, 0.025, 0.975)
 
@@ -28,7 +30,17 @@ prbl <- c( 0.5, 0.25, 0.75, 0.025, 0.975)
 mypalette <- c("#A8DDB5" ,"#7BCCC4" ,"#4EB3D3" ,"#2B8CBE", "#08589E")
 mypalette2 <- c("#CCEBC5", "#A8DDB5" ,"#7BCCC4" ,"#4EB3D3" ,"#2B8CBE", "#0868AC" , "#084081")
 
-scenario <- "baseline_param"
+
+theme_set(new = theme_few())
+theme_update(axis.text = element_text(size = 10),
+             axis.title = element_text(size = 10,
+                                       margin = margin(t = 10, r = 10, b = 10, l = 10)),
+             legend.position = "bottom",
+             legend.text=element_text(size=10),
+             legend.title=element_text(size=10)
+             #plot.title = element_text(hjust = 0.5),
+)
+
 
 
 sim_path <-
@@ -56,9 +68,14 @@ if(!dir.exists(outpt_pth("cumlyears/"))) dir.create(outpt_pth("cumlyears/"), rec
 if(!dir.exists(outpt_pth("summary/"))) dir.create(outpt_pth("summary/"), recursive = TRUE)
 
 
-
+# Flags for different parts
 runmodel <- FALSE
 runtables <- FALSE
+runplots <- FALSE
+plotsave <- FALSE
+runtables <- FALSE
+runONScalib <- TRUE
+runONScalib_alt <- FALSE
 ineq <- FALSE
 
 if(runmodel){
@@ -73,15 +90,15 @@ if(runmodel){
 
 # The simulation & post-processing
 
-n_sim <-500
+n_sim <-100
 outstrata <- c("mc", "year", "gender", "age","imd", "region")
 prevtab <- data.table()
 inctab <- data.table()
 cftab <- data.table()
 
 tt <- data.table( # Auxiliary table
-  y = c(2019L:2049L),
-  year = 2019L:2049L)
+  y = c(2019L:2050L),
+  year = 2019L:2050L)
 
 for (i in 401:n_sim){
   ll <- copy(lu)
@@ -164,7 +181,8 @@ pats[year == max_year, `:=` (healthy = healthy/2,
                              state_incCond = state_incCond/2,
                              state_BMM = state_BMM/2,
                              state_CMM = state_CMM/2)]
-yrs_in_state_sum <- pats[, .(N = .N,
+yrs_in_state_sum <- pats[new_pid != 1, # Don't want to include people in the first year before start the simulation
+                          .(N = .N,
                              Healthy = sum(healthy ) ,
                              IncCond = sum(state_incCond),
                              BMM = sum(state_BMM),
@@ -200,12 +218,126 @@ gc()
 
 }
 
+# Calibrating to the ONS population projections
+if(runONScalib){
+  prevtab <- fread(outpt_pth(paste0(scenario,"_prvl.csv.gz")), header = TRUE)
+  # Make the ONScalib table
+  tot_num <- prevtab[state == "IncCond", #only need 1 state as the atrisk is all the same
+                     .(N = sum(atrisk)), keyby = .(mc, year, gender, age)]
+  tot_num[, age2 := ifelse(age >= 105, "105+", age)][, age := NULL]
+
+  # Want to calculate the weights based on the average total popsize,
+  # otherwise all the scenarios will have the same total pop
+  tot_num <- tot_num[, .(N = mean(N)), keyby = .(year, gender, age2)]
+
+  popproject <- fread(project_path("ONSpopproj.csv"), header = T)
+
+  tot_num[popproject, on = c("year", "gender", "age2"), ons_N := i.N]
+  tot_num[, N := N * 100]
+  tot_num[, ONSwt := ons_N/N]
+  # tot_num[age2 == 30, ONSwt := 1] # not weighting the 30 year olds as have their numbers already
+  fwrite(tot_num, outpt_pth(paste0(scenario,"_ONSwt.csv.gz")))
+
+  prevtab[, age2 := ifelse(age >= 105, "105+", age)]
+  prevtab[tot_num, on = c("year", "gender", "age2"), ONSwt := i.ONSwt]
+  #  prevtab[, `:=` (N_wtd = N* ONSwt, atrisk_wtd = atrisk * ONSwt )]
+  fwrite(prevtab, outpt_pth(paste0(scenario,"_prvl.csv.gz")), row.names  = FALSE)
+  rm(prevtab)
+
+  inctab <- fread(outpt_pth(paste0(scenario,"_incd.csv.gz")), header = TRUE)
+  inctab[, age2 := ifelse(age >= 105, "105+", age)]
+  inctab[tot_num, on = c("year", "gender", "age2"), ONSwt := i.ONSwt]
+  #  prevtab[, `:=` (N_wtd = N* ONSwt, atrisk_wtd = atrisk * ONSwt )]
+  fwrite(inctab, outpt_pth(paste0(scenario,"_incd.csv.gz")), row.names  = FALSE)
+  rm(inctab)
+
+  cftab <- fread(outpt_pth(paste0(scenario,"_cf.csv.gz")), header = TRUE)
+  cftab[, age2 := ifelse(age >= 105, "105+", age)]
+  cftab[tot_num, on = c("year", "gender", "age2"), ONSwt := i.ONSwt]
+  #  prevtab[, `:=` (N_wtd = N* ONSwt, atrisk_wtd = atrisk * ONSwt )]
+  fwrite(cftab, outpt_pth(paste0(scenario,"_cf.csv.gz")), row.names  = FALSE)
+  rm(cftab)
+}
+
+# Calibrating to alternative ONS projections (low and high migration)
+if(runONScalib_alt){
+  prevtab <- fread(outpt_pth(paste0(scenario,"_prvl.csv.gz")), header = TRUE)
+  # Make the ONScalib table
+  agegroup5yfn(prevtab)
+  prevtab[, Ages := ifelse(age < 90, substr(agegrp5, 1,5),
+                           ifelse(age >= 90 & age < 95, "90-94",
+                                  ifelse(age >= 95 & age < 100, "95-99", "100 & over")))]
+  tot_num <- prevtab[state == "IncCond", #only need 1 state as the atrisk is all the same
+                     .(N = sum(atrisk)), keyby = .(mc, year, gender, Ages)]
+  # tot_num[, age2 := ifelse(age >= 105, "105+", age)][, age := NULL]
+
+  # Want to calculate the weights based on the average total popsize,
+  # otherwise all the scenarios will have the same total pop
+  tot_num <- tot_num[, .(N = mean(N)), keyby = .(year, gender, Ages)]
+
+  popproject <- fread(project_path("ONSpopproj_highmig.csv"), header = T)
+
+  tot_num[popproject, on = c("year", "gender", "Ages"), ons_N := i.N]
+  tot_num[, N := N * 100]
+  tot_num[, ONSwt := ons_N/N]
+  # tot_num[age2 == 30, ONSwt := 1] # not weighting the 30 year olds as have their numbers already
+  fwrite(tot_num, outpt_pth(paste0(scenario,"_ONSwt_highmig.csv.gz")))
+
+  prevtab[tot_num, on = c("year", "gender", "Ages"), ONSwt_highmig := i.ONSwt]
+  #  prevtab[, `:=` (N_wtd = N* ONSwt, atrisk_wtd = atrisk * ONSwt )]
+  #fwrite(prevtab, outpt_pth(paste0(scenario,"_prvl.csv.gz")), row.names  = FALSE)
+
+  inctab <- fread(outpt_pth(paste0(scenario,"_incd.csv.gz")), header = TRUE)
+  agegroup5yfn(inctab)
+  inctab[, Ages := ifelse(age < 90, substr(agegrp5, 1,5),
+                          ifelse(age >= 90 & age < 95, "90-94",
+                                 ifelse(age >= 95 & age < 100, "95-99", "100 & over")))]
+  inctab[tot_num, on = c("year", "gender", "Ages"), ONSwt_highmig := i.ONSwt]
+  # fwrite(inctab, outpt_pth(paste0(scenario,"_incd.csv.gz")), row.names  = FALSE)
 
 
+
+
+  # low migration
+  tot_num <- prevtab[state == "IncCond", #only need 1 state as the atrisk is all the same
+                     .(N = sum(atrisk)), keyby = .(mc, year, gender, Ages)]
+  # tot_num[, age2 := ifelse(age >= 105, "105+", age)][, age := NULL]
+
+  # Want to calculate the weights based on the average total popsize,
+  # otherwise all the scenarios will have the same total pop
+  tot_num <- tot_num[, .(N = mean(N)), keyby = .(year, gender, Ages)]
+
+  popproject <- fread(project_path("ONSpopproj_lowmig.csv"), header = T)
+  tot_num[popproject, on = c("year", "gender", "Ages"), ons_N := i.N]
+  tot_num[, N := N * 100]
+  tot_num[, ONSwt := ons_N/N]
+  # tot_num[age2 == 30, ONSwt := 1] # not weighting the 30 year olds as have their numbers already
+  fwrite(tot_num, outpt_pth(paste0(scenario,"_ONSwt_lowmig.csv.gz")))
+  prevtab[tot_num, on = c("year", "gender", "Ages"), ONSwt_lowhmig := i.ONSwt]
+  #  prevtab[, `:=` (N_wtd = N* ONSwt, atrisk_wtd = atrisk * ONSwt )]
+  fwrite(prevtab, outpt_pth(paste0(scenario,"_prvl.csv.gz")), row.names  = FALSE)
+  rm(prevtab)
+
+  inctab[tot_num, on = c("year", "gender", "Ages"), ONSwt_lowmig := i.ONSwt]
+  fwrite(inctab, outpt_pth(paste0(scenario,"_incd.csv.gz")), row.names  = FALSE)
+
+
+  #
+  # cftab <- fread(outpt_pth(paste0(scenario,"_cf.csv.gz")), header = TRUE)
+  # cftab[, age2 := ifelse(age >= 105, "105+", age)]
+  # cftab[tot_num, on = c("year", "gender", "age2"), ONSwt := i.ONSwt]
+  # #  prevtab[, `:=` (N_wtd = N* ONSwt, atrisk_wtd = atrisk * ONSwt )]
+  # fwrite(cftab, outpt_pth(paste0(scenario,"_cf.csv.gz")), row.names  = FALSE)
+  # rm(cftab)
+}
+
+#######
+# Needs updating belowß
 
 if(runtables){
+  yrs <- c(2019,2029,2039,2049)
   bigtab <- fread(outpt_pth(paste0(scenario,"_prvl.csv.gz")), header = TRUE)[
-    year %in% c(2019,2029,2039,2049)]
+    year %in% yrs]
 
 
   bigtab[, imd := factor(imd)]
