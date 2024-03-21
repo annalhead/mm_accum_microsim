@@ -1,6 +1,7 @@
 # mm_accum_microsim
 
-This repository contains the code for the development and application of a dynamic microsilmulation to explore socioeconomic inequalities in multimorbidity. 
+This repository contains the code for the development and application of a dynamic microsilmulation to explore socioeconomic inequalities in multimorbidity.
+This branch is for the model version used in my thesis (submitted April 2020)
 
 This work forms part of my Public Health PhD: *Socioeconomic inequalities in multimorbidity: an epidemiological and microsimulation study*
 This work was developed with support from Dr Chris Kypridemos, Dr Max Birkett, Dr Kate Fleming, and Prof Martin O'Flaherty. 
