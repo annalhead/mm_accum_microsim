@@ -181,13 +181,29 @@ patients$patient_id <- 1:n_pats
 
 # Want to add in start states based on the distribution of start states in my data
 # Doing this based on sex, imd & agegroup at entry.
-myDT <-
-  read_fst(data_dir_CPRD("accumDT_atf.fst"), as.data.table = TRUE)[imd != "" & gender != "I"]
+# myDT <-
+#   read_fst(data_dir_CPRD("accumDT_atf.fst"), as.data.table = TRUE)[imd != "" & gender != "I"]
+#
+# myDT[, ageentergrp5 := cut_width(ageenter, width = 5, boundary = 20, closed = "left")]
+# myDT[ageenter >=90 ,ageentergrp5 := ">=90"]
+# startstateprob <- myDT[, .N, by = .(gender, imd, ageentergrp5, startstate)]
+# setnames(startstateprob, "ageentergrp5", "agegrp5")
 
-myDT[, ageentergrp5 := cut_width(ageenter, width = 5, boundary = 20, closed = "left")]
-myDT[ageenter >=90 ,ageentergrp5 := ">=90"]
-startstateprob <- myDT[, .N, by = .(gender, imd, ageentergrp5, startstate)]
-setnames(startstateprob, "ageentergrp5", "agegrp5")
+# Want to add in start states based on the distribution of start states in my data
+# Doing this based on sex, imd & agegroup in 2019
+myDT <- read_fst(data_dir_CPRD("combi_mm_detailed.fst"), as.data.table = T)[
+  imd != "" & gender != "Indeterminate"]
+myDT[, imd := factor(imd)]
+myDT[, gender := factor(gender,
+                        levels = c("Men", "Women"),
+                        labels = c("M", "F"))]
+myDT[, `:=` (agegrp5 = cut_width(age, width = 5, boundary = 20, closed = "left"))]
+myDT[age >= 90, agegrp5 := ">=90"]
+myDT[, startstate := ifelse(cmm != 0, 4,
+                            ifelse(bmm != 0, 3,
+                                   ifelse(onecond != 0, 2,
+                                          1)))]
+startstateprob <- myDT[, .N, by = .(gender, imd, agegrp5, startstate)]
 
 cohtab <- rbind(cohtab, cohtab30, fill = TRUE)
 cohtab[, `:=` (agegrp5 = cut_width(age, width = 5, boundary = 20, closed = "left"))]
