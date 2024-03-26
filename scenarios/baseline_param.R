@@ -4,7 +4,6 @@
 # for each iteration, a normal distribution is used to inject parameter uncertainty into the
 # transition time estimates
 
-
 library(data.table)
 data.table::setDTthreads(5) #this is so that don't use all the processors
 library(fst)
@@ -331,9 +330,8 @@ if(runONScalib_alt){
   # rm(cftab)
 }
 
-#######
-# Needs updating belowß
 
+# Making big summary table for select years
 if(runtables){
   yrs <- c(2019,2029,2039,2049)
   bigtab <- fread(outpt_pth(paste0(scenario,"_prvl.csv.gz")), header = TRUE)[
@@ -363,8 +361,8 @@ if(runtables){
   bigtab[agegrp5 %in% c("80-84", "85-89"), agegrp10 := "80-89"]
   bigtab[, agegrp10 := factor(agegrp10)]
 
-  bigtab[, outcome := N/atrisk *100]
-  #fwrite(bigtab, outpt_pth_summary("prvltab.csv.gz"), row.names = FALSE)
+  #bigtab[, outcome := N/atrisk *100]
+  fwrite(bigtab, outpt_pth_summary("prvltab.csv.gz"), row.names = FALSE)
 
   # Standardising to esp
   esp <- mk_esp()
@@ -395,7 +393,7 @@ if(runtables){
          aes(x = year, y = `prop_50%` * 100, fill = imd)) +
     geom_col(position = "dodge") +
     facet_grid(rows = vars(state)) +
-    ylim(0,85) +
+    ylim(0,90) +
     ylab("Crude prevalence (%)") +
     xlab("Year") +
     labs(fill = "IMD quintile") +
@@ -433,7 +431,7 @@ if(runtables){
            aes(x = year, y = `prop_50%` * 100, col = imd)) +
       geom_smooth(linewidth = 0.5, se = FALSE) +
       facet_grid(state ~ gender ) +
-      ylim(0,90) +
+      ylim(0,100) +
       ylab("Crude prevalence (%)") +
       xlab("Year") +
       labs(col = "IMD quintile") +
@@ -447,13 +445,105 @@ if(runtables){
 
     }
 
+    #Looking with the different migration assumptions
+
+
+    outstrata <- c("mc", "year","state")
+    main <- bigtab2[,
+                    .(prop = sum(N * ONSwt)/sum(atrisk * ONSwt)), keyby = outstrata]
+    main <- fn_mc(main, outstrata, prbl, "outcome", "prop_") #this then gives the median and various uncertainty intervals as defined by prbl above
+
+    low <- bigtab2[,
+                   .(prop = sum(N * ONSwt_lowhmig)/sum(atrisk * ONSwt_lowhmig)), keyby = outstrata]
+    low <- fn_mc(low, outstrata, prbl, "outcome", "prop_") #this then gives the median and various uncertainty intervals as defined by prbl above
+
+    high <- bigtab2[,
+                    .(prop = sum(N * ONSwt_highmig)/sum(atrisk * ONSwt_highmig)), keyby = outstrata]
+    high <- fn_mc(high, outstrata, prbl, "outcome", "prop_") #this then gives the median and various uncertainty intervals as defined by prbl above
+
+    main <- rbind(main[, assump := "main"], low[, assump := "low"], high[, assump := "high"])
+
+    main[, state := factor(state,
+                           levels = c( "Healthy", "IncCond", "BMM", "CMM" ),
+                           labels = c("Healthy", "1 condition", "Basic\nmultimorbidity",
+                                      "Complex\nmultimorbidity"))]
+
+    main[, assump := factor(assump,
+                            levels = c("main", "low", "high"),
+                            labels = c("Main (2020)", "Low migration (2018)", "High migration (2018)"))]
+
+
+
+    ggplot(main[state != "Healthy"],
+           aes(x = year, y = `prop_50%` * 100, col = assump)) +
+      geom_smooth(linewidth = 0.5, se = FALSE) +
+      facet_grid( ~state  ) +
+      ylim(0,100) +
+      ylab("Crude prevalence (%)") +
+      xlab("Year") +
+      labs(col = "ONS projection variant") +
+      guides(col = guide_legend(reverse = FALSE)) +
+      #      scale_color_manual(values = mypalette) +
+      theme(legend.position = "bottom")
+    if(plotsave){
+      #ggsave(filename = outpt_pth("simplots/prvl_overall_st_excl.png"))
+      ggsave2(outpt_pth_summary("prvl_overall_crude_excl_migassump.svg") , scale = 0.7, width = 14, height = 8)
+
+    }
+
+
+
+
+
+
+
+
+    outstrata <- c("mc", "year","state")
+    main <- bigtab2[,
+                    .(prvl = sum(N * ONSwt)), keyby = outstrata]
+    main <- fn_mc(main, outstrata, prbl, "outcome", "prvl_") #this then gives the median and various uncertainty intervals as defined by prbl above
+
+    low <- bigtab2[,
+                   .(prvl = sum(N * ONSwt_lowhmig)), keyby = outstrata]
+    low <- fn_mc(low, outstrata, prbl, "outcome", "prvl_") #this then gives the median and various uncertainty intervals as defined by prbl above
+
+    high <- bigtab2[,
+                    .(prvl = sum(N * ONSwt_highmig)), keyby = outstrata]
+    high <- fn_mc(high, outstrata, prbl, "outcome", "prvl_") #this then gives the median and various uncertainty intervals as defined by prbl above
+
+    main <- rbind(main[, assump := "main"], low[, assump := "low"], high[, assump := "high"])
+
+    main[, state := factor(state,
+                           levels = c( "Healthy", "IncCond", "BMM", "CMM" ),
+                           labels = c("Healthy", "1 condition", "Basic\nmultimorbidity",
+                                      "Complex\nmultimorbidity"))]
+
+
+
+    ggplot(main[state != "Healthy"],
+           aes(x = year, y = `prvl_50%` * 100, col = assump)) +
+      geom_smooth(linewidth = 0.5, se = FALSE) +
+      facet_grid( ~state  ) +
+      ylim(0,100) +
+      ylab("Crude prevalence (%)") +
+      xlab("Year") +
+      labs(col = "IMD quintile") +
+      guides(col = guide_legend(reverse = FALSE)) +
+      scale_color_manual(values = mypalette) +
+      theme(legend.position = "bottom")
+
+
+
   }
 
 
 
-  #mutually exclusive health states
+  # mutually exclusive health states
 
-  prvlbystate <- bigtabsum[, .(mc, year, gender, imd, agegrp5 ,agegrp10,  agegrp_big, state  ,  N ,atrisk)]
+  prvlbystate <- bigtabsum[, .(N = sum(N), atrisk = sum(atrisk)),
+                           by = .(mc, year, gender, imd, agegrp5 ,
+                                  agegrp10,  agegrp_big, state)]
+
   prvlbystate <- dcast(prvlbystate,
                        mc + year + gender + imd + agegrp5 + agegrp10 + agegrp_big  + atrisk ~ state,
                        value.var = "N")
@@ -488,7 +578,7 @@ if(runtables){
          aes(x = imd, y = `outcome_50%` * 100, fill = state)) +
     geom_col(position = "stack") +
     facet_grid( ~ year) +
-    ylab("Standardised prevalence (%)") +
+    ylab("Crude prevalence (%)") +
     xlab("IMD quintile (1 = least deprived)") +
     labs(fill = "State") +
     guides(fill = guide_legend(reverse = TRUE)) +
@@ -659,6 +749,7 @@ if(runtables){
 
   ### MM or no MM
   outstrata <- c("mc", "year", "state2")
+  prvlbystate[, state2 := ifelse(state %in% c("BMM", "CMM"), "MM", "no MM")]
 
   d <- prvlbystate[,
                    .(N = sum(N) * 100), keyby = outstrata]
@@ -666,8 +757,8 @@ if(runtables){
   d <- fn_mc(d, outstrata, prbl, "outcome", "N_")
   fwrite(d, outpt_pth_summary("N_exclsv_statesMMnoMM.csv"), row.names = FALSE)
   d_w[, change := (`2049`/`2019`) * 100]
-  outstrata <- c("mc", "state")
-  d_w <- fn_mc(d_w[, .(mc, state, change)], outstrata, prbl, "outcome", "change_")
+  outstrata <- c("mc", "state2")
+  d_w <- fn_mc(d_w[, .(mc, state2, change)], outstrata, prbl, "outcome", "change_")
   fwrite(d_w, outpt_pth_summary("N_exclsv_states_change.csv"), row.names = FALSE)
 
 
@@ -869,7 +960,34 @@ if(runtables){
   expect_sex_diff <- rbind(expect_sex_diff, d[, type := "cmmfree_le"])
   fwrite(expect_sex_diff, outpt_pth_summary("le_sex_diff.csv"), row.names = FALSE)
 
+  #IMD Diff by sex
+  expect_diff <- data.table()
 
+  instrata <- c("mc", "ageenter", "gender","imd" ,"init_year" )
+  outstrata <- c("mc", "ageenter", "gender", "init_year" )
+
+  # LE
+  d <- lifecourse[, .(le = mean(max_age)), keyby = instrata]
+  imd <- dcast(d[imd %in% c(1,5)], mc  + ageenter + gender + init_year ~ imd, value.var = "le")
+  imd[, `:=` (abs = `5`-`1`, rel = `5` / `1` *100)][, c("5", "1") := NULL]
+  imd <- fn_mc(imd, outstrata, prbl, "outcome", "outcome")
+  expect_diff <- rbind(expect_diff, imd[, `:=`(type ="le_diff")])
+
+  # MMfree LE
+  d <- lifecourse[, .(le = mean(healthy + incCond)), keyby = instrata]
+  imd <- dcast(d[imd %in% c(1,5)], mc  + ageenter + gender + init_year ~ imd, value.var = "le")
+  imd[, `:=` (abs = `5`-`1`, rel = `5` / `1` *100)][, c("5", "1") := NULL]
+  imd <- fn_mc(imd, outstrata, prbl, "outcome", "outcome")
+  expect_diff <- rbind(expect_diff, imd[, `:=`(type ="mmfreele_diff")])
+
+  # CMMfree LE
+  d <- lifecourse[, .(le = mean(healthy + incCond + bmm)), keyby = instrata]
+  imd <- dcast(d[imd %in% c(1,5)], mc  + ageenter + gender + init_year ~ imd, value.var = "le")
+  imd[, `:=` (abs = `5`-`1`, rel = `5` / `1` *100)][, c("5", "1") := NULL]
+  imd <- fn_mc(imd, outstrata, prbl, "outcome", "outcome")
+  expect_diff <- rbind(expect_diff, imd[, `:=`(type ="cmmfreele_diff")])
+
+  fwrite(expect_diff, outpt_pth_summary("le_sex_imddiff.csv"), row.names = FALSE)
 
 
 
@@ -1072,7 +1190,7 @@ if(runtables){
   setkey(bigtab_cf, mc, gender, imd, agegrp_big)
 
   #By IMD
-  bigtab_cf_sum <- bigtab_cf[, .(cumN = sum(cumN)*100), keyby = .(mc, imd)]
+  bigtab_cf_sum <- bigtab_cf[state == "Overall", .(cumN = sum(cumN)*100), keyby = .(mc, imd)]
   setkey(bigtab_cf_sum, mc, imd)
   bigtab_cf_sum_w <- dcast(bigtab_cf_sum, mc  ~ imd, value.var = "cumN")
   bigtab_cf_sum_w[, `:=` (absdiff = `5` - `1`, reldiff = `5`/`1`)]
@@ -1093,7 +1211,7 @@ if(runtables){
 
 
   #By IMD & agegrp
-  d <- bigtab_cf[, .(cumN = sum(cumN)*100), keyby = .(mc, imd, agegrp_big)]
+  d <- bigtab_cf[state == "Overall", .(cumN = sum(cumN)*100), keyby = .(mc, imd, agegrp_big)]
   setkey(d, mc, imd, agegrp_big)
 
   d_w <- dcast(d, mc + agegrp_big  ~ imd, value.var = "cumN")
@@ -1105,7 +1223,7 @@ if(runtables){
   outstrata <- c("mc", "imd","agegrp_big")
   d <- fn_mc(d, outstrata, prbl, "outcome", "outcome_") #this then gives the median and various uncertainty intervals as defined by prbl above
 
-  tmp <- bigtab_cf[, .(cumN = sum(cumN)*100), keyby = .(mc, agegrp_big)]
+  tmp <- bigtab_cf[state == "Overall", .(cumN = sum(cumN)*100), keyby = .(mc, agegrp_big)]
   setkey(tmp, mc, agegrp_big)
   outstrata <- c("mc", "agegrp_big")
   tmp <- fn_mc(tmp, outstrata, prbl, "outcome", "outcome_") #this then gives the median and various uncertainty intervals as defined by prbl above
@@ -1115,14 +1233,14 @@ if(runtables){
 
 
   #By IMD & agegrp
-  bigtab_cf_sum <- bigtab_cf[, .(cumN = sum(cumN)*100), keyby = .(mc, imd)]
+  bigtab_cf_sum <- bigtab_cf[state == "Overall", .(cumN = sum(cumN)*100), keyby = .(mc, imd)]
   setkey(bigtab_cf_sum, mc, imd)
 
 
   outstrata <- c("mc", "imd")
   d <- fn_mc(bigtab_cf_sum, outstrata, prbl, "outcome", "outcome_") #this then gives the median and various uncertainty intervals as defined by prbl above
 
-  tmp <- bigtab_cf[, .(cumN = sum(cumN)*100), keyby = .(mc)]
+  tmp <- bigtab_cf[state == "Overall", .(cumN = sum(cumN)*100), keyby = .(mc)]
   setkey(tmp, mc)
   outstrata <- c("mc")
   tmp <- fn_mc(tmp, outstrata, prbl, "outcome", "outcome_") #this then gives the median and various uncertainty intervals as defined by prbl above
@@ -1134,7 +1252,7 @@ if(runtables){
 
   #Prop deaths under/over 65
   outstrata <- c("mc", "agegrp_big")
-  d <- bigtab_cf[, .(cumN = sum(cumN)*100), keyby = outstrata]
+  d <- bigtab_cf[state == "Overall", .(cumN = sum(cumN)*100), keyby = outstrata]
   d <- dcast(d,mc ~ agegrp_big, value.var = "cumN")
   d[, total := wrk_age + over65][, `:=` (over65 = over65/total * 100,
                                          wrk_age = wrk_age/total * 100)][,
@@ -1143,7 +1261,7 @@ if(runtables){
   d <- fn_mc(d, outstrata, prbl, "outcome", "outcome_") #this then gives the median and various uncertainty intervals as defined by prbl above
 
    outstrata <- c("mc", "imd","agegrp_big")
-  e <- bigtab_cf[, .(cumN = sum(cumN)*100), keyby = outstrata]
+  e <- bigtab_cf[state == "Overall", .(cumN = sum(cumN)*100), keyby = outstrata]
   e <- dcast(e,mc + imd ~ agegrp_big, value.var = "cumN")
   e[, total := wrk_age + over65][, `:=` (over65 = over65/total * 100,
                                          wrk_age = wrk_age/total * 100)][,
@@ -1158,6 +1276,8 @@ if(runtables){
 
 }
 
+
+#### Needs checking below here ####
 
 if(ineq){
 
