@@ -1,6 +1,7 @@
 # mm_accum_microsim
 
 This repository contains the code for the development and application of a dynamic microsilmulation to explore socioeconomic inequalities in multimorbidity. 
+This version is the code used for the paper	 *Socioeconomic inequalities in accumulation of multimorbidity in England from 2019 to 2049: a microsimulation projection study* Head A, Birkett M, Fleming K, Kypridemos C, O'Flaherty M. Lancet Public Health 2024; 9: e231–39. Doi: 10.1016/S2468-2667(24)00028-8
 
 This work forms part of my Public Health PhD: *Socioeconomic inequalities in multimorbidity: an epidemiological and microsimulation study*
 This work was developed with support from Dr Chris Kypridemos, Dr Max Birkett, Dr Kate Fleming, and Prof Martin O'Flaherty. 
@@ -24,7 +25,7 @@ Individuals could die from each of the four health states, resulting in a total 
  
 This project builds on from the data cleaning and phenotyping outlined in the repositories: https://github.com/annalhead/CPRD_multimorbidity_codelists and https://github.com/annalhead/CPRD_multimorbidity_trends, and the work presented here: https://www.thelancet.com/journals/lanhl/article/PIIS2666-7568(21)00146-X/fulltext 
 
-Currently, this repository only contains the analysis and simulation code, and not the model input files. These will hopefully be added in the future, along with a more detailed technical model summary. If you have any questions in the meantime, please email me at anna.head@liverpool.ac.uk 
+Currently, this repository only contains the analysis and simulation code, and not the model input files. If you have any questions, please email me at anna.head2@liverpool.ac.uk 
 
 ## Repository summary
 
@@ -49,9 +50,8 @@ This folder contains the R scripts for running the various theoretical scenarios
 1. vldtn_clbrtn.R: uses a subset of CPRD data with 10 years of follow-up to validate and calibrate the model. Final calibration factors are saved in the fn.R file above
 2. baseline.R: applies the microsimulation model to the ONS 2019 estimates for 30-90 year olds from 2019-2049 
 3. baseline_param.R: as baseline.R, but with added parameter uncertainty for the transition times between states 
-4-8. scenario1.R-scenario5.R: 5 theory-based scenarios for health improvement and inequalities reduction
 
 ### Auxil 
 Additional files 
-1. compare.R: post-simulation tables and plots for comparing baseline and scenario results. 
+/
 
