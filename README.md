@@ -24,7 +24,7 @@ Individuals could die from each of the four health states, resulting in a total 
  
 This project builds on from the data cleaning and phenotyping outlined in the repositories: https://github.com/annalhead/CPRD_multimorbidity_codelists and https://github.com/annalhead/CPRD_multimorbidity_trends, and the work presented here: https://www.thelancet.com/journals/lanhl/article/PIIS2666-7568(21)00146-X/fulltext 
 
-Currently, this repository only contains the analysis and simulation code, and not the model input files. These will hopefully be added in the future, along with a more detailed technical model summary. If you have any questions in the meantime, please email me at anna.head@liverpool.ac.uk 
+Currently, this repository only contains the analysis and simulation code, and not the model input files. These will hopefully be added in the future, along with a more detailed technical model summary. If you have any questions in the meantime, please email me at anna.head2@liverpool.ac.uk 
 
 ## Repository summary
 
