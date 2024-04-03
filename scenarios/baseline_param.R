@@ -69,7 +69,6 @@ if(!dir.exists(outpt_pth("summary/"))) dir.create(outpt_pth("summary/"), recursi
 
 # Flags for different parts
 runmodel <- FALSE
-runtables <- FALSE
 runplots <- FALSE
 plotsave <- FALSE
 runtables <- FALSE
@@ -364,12 +363,20 @@ if(runtables){
   #bigtab[, outcome := N/atrisk *100]
   fwrite(bigtab, outpt_pth_summary("prvltab.csv.gz"), row.names = FALSE)
 
-  # Standardising to esp
-  esp <- mk_esp()
-  strata <- c("mc", "year", "gender", "imd", "agegrp_big", "agegrp5", "agegrp10", "state")
+  #weight them
+  if(runONScalib){
+    bigtabsum <- copy(bigtab)
+    bigtabsum <- bigtabsum[, `:=` (N = N * ONSwt, atrisk = atrisk * ONSwt)][, ONSwt := NULL]
+  }else{
+    # # Standardising to esp
+    esp <- mk_esp()
+    strata <- c("mc", "year", "gender", "imd", "agegrp_big", "agegrp5", "agegrp10", "state")
 
-  #prev
-  bigtabsum <- fn_stnd(bigtab, strata)
+
+    #prev
+    bigtabsum <- fn_stnd(bigtab, strata)
+  }
+
 
 
   #Proportion by state - unstandardised
@@ -378,6 +385,13 @@ if(runtables){
                  .(prop = sum(N)/sum(atrisk)), keyby = outstrata]
   d <- fn_mc(d, outstrata, prbl, "outcome", "prop_") #this then gives the median and various uncertainty intervals as defined by prbl above
   #fwrite(d, outpt_pth_summary("prvl_inclsv_states.csv"), row.names = FALSE)
+
+  #N by state & agegrp10
+  outstrata <- c("mc", "year", "agegrp10", "state")
+  d <- bigtabsum[,
+                 .(N = sum(N ), atrisk = sum(atrisk)), keyby = outstrata]
+  d <- fn_mc(d, outstrata, prbl, "outcome", "prop_") #this then gives the median and various uncertainty intervals as defined by prbl above
+  fwrite(d, outpt_pth_summary("prvl_inclsv_states_agegrp10.csv"), row.names = FALSE)
 
 
   outstrata <- c("mc", "year", "imd","state")
@@ -409,9 +423,13 @@ if(runtables){
 
   extraplot <- FALSE
   if(extraplot){
-    bigtab2 <- fread(outpt_pth(paste0(scenario,"_prvl.csv.gz")), header = TRUE)[
-      , .(mc, year, gender, imd, state, N, atrisk)
-    ]
+    if(runONScalib){
+      bigtab2 <- fread(outpt_pth(paste0(scenario,"_prvl.csv.gz")), header = TRUE)[
+        , .(mc, year, gender, imd, state, N = N*ONSwt, atrisk = atrisk * ONSwt)]
+    }else{
+      bigtab2 <- fread(outpt_pth(paste0(scenario,"_prvl.csv.gz")), header = TRUE)[
+        , .(mc, year, gender, imd, state, N, atrisk)]
+    }
     bigtab2[, imd := factor(imd)]
 
     setkey(bigtab2, mc, year, gender, imd, state)
@@ -539,14 +557,15 @@ if(runtables){
 
 
   # mutually exclusive health states
-
   prvlbystate <- bigtabsum[, .(N = sum(N), atrisk = sum(atrisk)),
                            by = .(mc, year, gender, imd, agegrp5 ,
                                   agegrp10,  agegrp_big, state)]
 
   prvlbystate <- dcast(prvlbystate,
-                       mc + year + gender + imd + agegrp5 + agegrp10 + agegrp_big  + atrisk ~ state,
+                       mc + year + gender + imd + agegrp5 + agegrp10 +
+                         agegrp_big  + atrisk ~ state,
                        value.var = "N")
+
 
   prvlbystate[, Healthy := atrisk - IncCond][
     , IncCond := IncCond - BMM][
@@ -669,6 +688,19 @@ if(runtables){
 
 
 
+  #Making this a table of crude, exclusive prevalence by 10yagegerp
+  outstrata <- c("mc", "year", "agegrp10","state")
+
+  d <- prvlbystate[,
+                   .(N = sum(N) * 100), keyby = outstrata]
+  d_w <- dcast(d, mc  + state  + agegrp10~ year, value.var = "N")
+  d <- fn_mc(d, outstrata, prbl, "outcome", "N_")
+  fwrite(d, outpt_pth_summary("N_exclsv_states_agegrp10.csv"), row.names = FALSE)
+  d_w[, change := (`2049`/`2019`) * 100]
+  outstrata <- c("mc", "agegrp10","state")
+  d_w <- fn_mc(d_w[, .(mc, agegrp10,state, change)], outstrata, prbl, "outcome", "change_")
+  fwrite(d_w, outpt_pth_summary("N_exclsv_states_agegrp10_change.csv"), row.names = FALSE)
+
 
 
   #Making this a tableby sex
@@ -747,10 +779,39 @@ if(runtables){
 
 
 
-  ### MM or no MM
+  #Making this a table of crude, exclusive prevalence by 10yagegerp and imd
+  outstrata <- c("mc", "year", "imd", "agegrp10","state")
+
+  d <- prvlbystate[,
+                   .(N = sum(N) * 100), keyby = outstrata]
+  d_w <- dcast(d, mc  + state + imd + agegrp10~ year, value.var = "N")
+  d <- fn_mc(d, outstrata, prbl, "outcome", "N_")
+  fwrite(d, outpt_pth_summary("N_exclsv_states_imd_agegrp.csv"), row.names = FALSE)
+  d_w[, change := (`2049`/`2019`) * 100]
+  outstrata <- c("mc", "imd", "agegrp10","state")
+  d_w <- fn_mc(d_w[, .(mc, imd, agegrp10,state, change)], outstrata, prbl, "outcome", "change_")
+  fwrite(d_w, outpt_pth_summary("N_exclsv_states_imd_agegrp_change.csv"), row.names = FALSE)
+
+
+  #Making this a table of crude, exclusive prevalence by 10yagegerp
+  outstrata <- c("mc", "year", "agegrp10","state")
+
+  d <- prvlbystate[,
+                   .(N = sum(N) * 100), keyby = outstrata]
+  d_w <- dcast(d, mc  + state  + agegrp10~ year, value.var = "N")
+  d <- fn_mc(d, outstrata, prbl, "outcome", "N_")
+  fwrite(d, outpt_pth_summary("N_exclsv_states_agegrp10.csv"), row.names = FALSE)
+  d_w[, change := (`2049`/`2019`) * 100]
+  outstrata <- c("mc", "agegrp10","state")
+  d_w <- fn_mc(d_w[, .(mc, agegrp10,state, change)], outstrata, prbl, "outcome", "change_")
+  fwrite(d_w, outpt_pth_summary("N_exclsv_states_agegrp10_change.csv"), row.names = FALSE)
+
+
+
+
+  # ### MM or no MM
   outstrata <- c("mc", "year", "state2")
   prvlbystate[, state2 := ifelse(state %in% c("BMM", "CMM"), "MM", "no MM")]
-
   d <- prvlbystate[,
                    .(N = sum(N) * 100), keyby = outstrata]
   d_w <- dcast(d, mc  + state2 ~ year, value.var = "N")
@@ -759,7 +820,21 @@ if(runtables){
   d_w[, change := (`2049`/`2019`) * 100]
   outstrata <- c("mc", "state2")
   d_w <- fn_mc(d_w[, .(mc, state2, change)], outstrata, prbl, "outcome", "change_")
-  fwrite(d_w, outpt_pth_summary("N_exclsv_states_change.csv"), row.names = FALSE)
+  fwrite(d_w, outpt_pth_summary("N_exclsv_states_change_MMnoMM.csv"), row.names = FALSE)
+
+
+  outstrata <- c("mc", "year","state2")
+  d <- prvlbystate[,
+                   .(prvl = sum(N) / sum(atrisk/2) * 100), keyby = outstrata]
+  d_w <- dcast(d, mc  + state2 ~ year, value.var = "prvl")
+  d <- fn_mc(d, outstrata, prbl, "outcome", "prvl_")
+  fwrite(d, outpt_pth_summary("prvl_exclsv_statesMMnoMM.csv"), row.names = FALSE)
+  d_w[, change := (`2049`/`2019`) * 100]
+  outstrata <- c("mc", "state2")
+  d_w <- fn_mc(d_w[, .(mc, state2, change)], outstrata, prbl, "outcome", "change_")
+  fwrite(d_w, outpt_pth_summary("prvl_exclsv_states_change_MMnoMM.csv"), row.names = FALSE)
+
+
 
 
 
@@ -998,64 +1073,110 @@ if(runtables){
   ### What about cumulative incident cases?
 
 
-  bigtab_inc <- data.table()
+  if(!runONScalib){
+    bigtab_inc <- data.table()
     tmptab <- fread(outpt_pth(paste0(scenario,"_incd.csv.gz")), header = TRUE)
     setkey(tmptab, mc, year, gender, age, region, state)
     agegroup5yfn(tmptab)
     agegroup10yfn_b(tmptab)
     tmptab[, agegrp_big := ifelse(age <= 65, "wrk_age","over65") ]
-    tmptab <- tmptab[, .(N = sum(N), atrisk = sum(atrisk)),
-                     keyby = .(mc, year, gender, imd, agegrp5, agegrp10, agegrp_big, state)]
-    setkey(tmptab, mc, year, gender, imd, agegrp5, agegrp10, agegrp_big, state)
-    tmptab[, cumN := cumsum(N), keyby = .(mc, gender, imd, agegrp5, agegrp10, agegrp_big, state)]
-   # tmptab <- tmptab[year == 2049]
+    if(runONScalib & runONScalib_alt){
+      tmptab <- tmptab[, .(N_ONS = sum(N * ONSwt),
+                           N_ONS_lowmig = sum(N * ONSwt_lowmig) ,
+                           N_ONS_highmig = sum(N * ONSwt_highmig)),
+                       keyby = .(mc, year, gender, imd, agegrp5, agegrp10, agegrp_big, state)]
+      setkey(tmptab, mc, year, gender, imd, agegrp5, agegrp10, agegrp_big, state)
+      cml <- copy(tmptab)
+      cml[, `:=` (cumN = cumsum(N_ONS),
+                  cumN_lowmig = cumsum(N_ONS_lowmig),
+                  cumN_highmig = cumsum(N_ONS_highmig))
+          , keyby = .(mc, gender, imd, agegrp5, agegrp10, agegrp_big, state)]
+      tmptab[cml, on = .(mc, year, gender, imd, agegrp5, agegrp10, agegrp_big, state),
+             `:=` (cumN = i.cumN, cumN_lowmig = i.cumN_lowmig, cumN_highmig = i.cumN_highmig)]
+    }else{
+      tmptab <- tmptab[, .(N = sum(N), atrisk = sum(atrisk)),
+                       keyby = .(mc, year, gender, imd, agegrp5, agegrp10, agegrp_big, state)]
+      setkey(tmptab, mc, year, gender, imd, agegrp5, agegrp10, agegrp_big, state)
+      cml <- copy(tmptab)
+      cml[, cumN := cumsum(N), keyby = .(mc, gender, imd, agegrp5, agegrp10, agegrp_big, state)]
+      tmptab[cml, on = .(mc, year, gender, imd, agegrp5, agegrp10, agegrp_big, state), cumN := i.cumN]
+    }
+    # tmptab <- tmptab[year == 2049]
     tmptab[, scenario := scenario]
     bigtab_inc <- rbind(bigtab_inc, tmptab[, scenario := scenario])
     rm(tmptab)
     gc()
 
-  fwrite(bigtab_inc, outpt_pth_summary(paste0("incd_sum.csv.gz")), )
+    fwrite(bigtab_inc, outpt_pth_summary(paste0("incd_sum.csv.gz")), )
+  }else{
+    bigtab_inc <- data.table()
+    tmp <- fread(outpt_pth(paste0(scenario,"_incd.csv.gz")), header = TRUE)
+
+    setkey(tmp, mc, year, gender, age, region, state)
+    agegroup5yfn(tmp)
+    agegroup10yfn_b(tmp)
+    tmp[, agegrp_big := ifelse(age <= 65, "wrk_age","over65") ]
+    setkey(tmp, mc, year, gender, imd, agegrp5, agegrp10, agegrp_big, state)
+    inctabsum <- tmp[, .(N_ONS = sum(N * ONSwt),
+                         N_ONS_lowmig = sum(N * ONSwt_lowmig) ,
+                         N_ONS_highmig = sum(N * ONSwt_highmig)),
+                     keyby = .(mc, year, gender, imd, agegrp5, agegrp10, agegrp_big, state)]
+    inctabsum[, `:=` (cumN = cumsum(N_ONS),
+                      cumN_lowmig = cumsum(N_ONS_lowmig),
+                      cumN_highmig = cumsum(N_ONS_highmig))
+              , keyby = .(mc, gender, imd, agegrp5, agegrp10, agegrp_big, state)]
+    # tmptab <- tmptab[year == 2049]
+    inctabsum[, scenario := scenario]
+
+    fwrite(inctabsum, outpt_pth_summary(paste0("incd_sum.csv.gz")), row.names = F)
+    inctabsum[, imd := factor(imd)]
+
+    bigtab_inc <- copy(tmp)
+    bigtab_inc[, `:=` (N = N * ONSwt, atrisk = atrisk * ONSwt)]
+    rm(tmp)
+
+  }
+
   bigtab_inc[, imd := factor(imd)]
 
+  if(!runONScalib){
+    #Standardised
+    # # Standardising to esp
+    esp <- mk_esp()
+    strata <- c("mc","year", "gender", "imd", "agegrp5", "state")
 
 
-  #Standardised
-  # # Standardising to esp
-  esp <- mk_esp()
-  strata <- c("mc","year", "gender", "imd", "agegrp5", "state")
+    #inc
+    inctabsum <- fn_stnd(bigtab_inc, strata)
 
-
-  #inc
-  inctabsum <- fn_stnd(bigtab_inc, strata)
-
-  #inc
-  outstrata <- c("mc", "year", "gender","imd", "state")
-  fn_sex_lbls(inctabsum)
+    #inc
+    outstrata <- c("mc", "year", "gender","imd", "state")
+    fn_sex_lbls(inctabsum)
 
     d <- inctabsum[, .(incd = sum(N * wt_esp) / sum(popsize_wtd)*10000), keyby = eval(outstrata)] #doing it this way keeps the variable name as popsize
-  d <- fn_mc(d, outstrata, prbl, "outcome", "incd_") #this then gives the median and various uncertainty intervals as defined by prbl above
+    d <- fn_mc(d, outstrata, prbl, "outcome", "incd_") #this then gives the median and various uncertainty intervals as defined by prbl above
 
-  d[, state := factor(state,
-                       levels = c("1 condition", "Basic multimorbidity", "Complex multimorbidity"),
-                       labels = c("1 condition", "Basic\nmultimorbidity", "Complex\nmultimorbidity"))]
-  ggplot(d, aes(x = year, y = `incd_50%`, colour = imd)) +
-    geom_smooth(
-      linewidth = 0.5,
-      se = FALSE
-    ) +
-    facet_grid(state ~ gender) +
-    expand_limits(y = 0) +
-    scale_x_continuous(name = "Year") +
-    scale_y_continuous(name = "Age-standardised incidence (per 10,000)") +
-    labs(colour = "IMD quintile")  +
-    guides(colour = guide_legend(reverse = FALSE), nrow = 1) +
-    scale_colour_manual(values = mypalette) +
-    theme(legend.position = "bottom")
-  if(plotsave){
-    ggsave2(filename = outpt_pth_summary("st_inc_imd.svg"),  scale = 0.7, width = 12, height = 8)
+    d[, state := factor(state,
+                        levels = c("1 condition", "Basic multimorbidity", "Complex multimorbidity"),
+                        labels = c("1 condition", "Basic\nmultimorbidity", "Complex\nmultimorbidity"))]
+    ggplot(d, aes(x = year, y = `incd_50%`, colour = imd)) +
+      geom_smooth(
+        linewidth = 0.5,
+        se = FALSE
+      ) +
+      facet_grid(state ~ gender) +
+      expand_limits(y = 0) +
+      scale_x_continuous(name = "Year") +
+      scale_y_continuous(name = "Age-standardised incidence (per 10,000)") +
+      labs(colour = "IMD quintile")  +
+      guides(colour = guide_legend(reverse = FALSE), nrow = 1) +
+      scale_colour_manual(values = mypalette) +
+      theme(legend.position = "bottom")
+    if(plotsave){
+      ggsave2(filename = outpt_pth_summary("st_inc_imd.svg"),  scale = 0.7, width = 12, height = 8)
     }
 
-
+  }
 
   bigtab_inc <- bigtab_inc[year == 2049]
 
@@ -1126,6 +1247,40 @@ if(runtables){
 
   #fwrite(d, outpt_pth_summary("cumlcases_imd.csv"), row.names = FALSE)
 
+  if(runONScalib_alt){
+    ###### alternative weights
+
+    bigtab_inc_sum <- bigtab_inc[, .(cumN_lowmig = sum(cumN_lowmig)*100,
+                                     cumN_highmig = sum(cumN_highmig)*100), keyby = .(mc, imd, state)]
+    setkey(bigtab_inc_sum, mc, imd, state)
+    high <- dcast(bigtab_inc_sum, mc + state ~ imd, value.var = "cumN_highmig")
+    high[, `:=` (absdiff = `5` - `1`, reldiff = `5`/`1`)]
+    outstrata <- c("mc", "state")
+    high <- fn_mc( high  , outstrata, prbl, "outcome", "outcome_") #this then gives the median and various uncertainty intervals as defined by prbl above
+    high <- high[outcome %in% c("absdiff", "reldiff")]
+
+    low <- dcast(bigtab_inc_sum, mc + state ~ imd, value.var = "cumN_lowmig")
+    low[, `:=` (absdiff = `5` - `1`, reldiff = `5`/`1`)]
+    outstrata <- c("mc", "state")
+    low <- fn_mc( low  , outstrata, prbl, "outcome", "outcome_") #this then gives the median and various uncertainty intervals as defined by prbl above
+    low <- low[outcome %in% c("absdiff", "reldiff")]
+
+    low <- rbind(low[, assump := "low"], high[, assump := "high"])
+    fwrite(low,  outpt_pth_summary("cumlcases_imd_diff_migassump.csv"), row.names = FALSE)
+
+    outstrata <- c("mc", "imd", "state")
+    d <- fn_mc(bigtab_inc_sum, outstrata, prbl, "outcome", "outcome_") #this then gives the median and various uncertainty intervals as defined by prbl above
+
+    tmp <- inctabsum[, .(cumN_lowmig = sum(cumN_lowmig)*100,
+                         cumN_highmig = sum(cumN_highmig)*100), keyby = .(mc, state)]
+    setkey(tmp, mc, state)
+    outstrata <- c("mc", "state")
+    tmp <- fn_mc(tmp, outstrata, prbl, "outcome", "outcome_") #this then gives the median and various uncertainty intervals as defined by prbl above
+    d <- rbind(d, tmp[, imd := "all"])
+    fwrite(d, outpt_pth_summary("cumlcases_imd_migassump.csv"), row.names = FALSE)
+
+
+  }
 
   ### deaths
 
@@ -1149,42 +1304,58 @@ if(runtables){
   bigtab_cf[, imd := factor(imd)]
 
 
-
-  #Standardised
-  # # Standardising to esp
-  esp <- mk_esp()
-  strata <- c("mc","year", "gender", "imd", "agegrp5", "state")
-
-
-  cftabsum <- fn_stnd(bigtab_cf, strata)
-
-
-  outstrata <- c("mc", "year", "gender","imd", "state")
-  fn_sex_lbls(cftabsum)
-  d <- cftabsum[, .(cf = sum(N * wt_esp) / sum(popsize_wtd)*10000), keyby = eval(outstrata)] #doing it this way keeps the variable name as popsize
-  d <- fn_mc(d, outstrata, prbl, "outcome", "cf_") #this then gives the median and various uncertainty intervals as defined by prbl above
-  d[, state := factor(state,
-                      levels = c("Overall", "Healthy","IncCond", "BMM", "CMM"),
-                      labels = c("Overall", "Healthy","1 condition", "Basic\nmultimorbidity", "Complex\nmultimorbidity") )]
-
-  ggplot(d, aes(x = year, y = `cf_50%`, colour = imd)) +
-    geom_smooth(
-      linewidth = 0.5,
-      se = FALSE
-    ) +
-    facet_grid(state ~ gender) +
-    expand_limits(y = 0) +
-    scale_x_continuous(name = "Year") +
-    scale_y_continuous(name = "Age-standardised case-fatality") +
-    labs(colour = "IMD quintile")  +
-    guides(colour = guide_legend(reverse = FALSE), nrow = 1) +
-    scale_colour_manual(values = mypalette) +
-    theme(legend.position = "bottom")
-  if(plotsave){
-    ggsave2(filename = outpt_pth_summary("st_cf_imd.svg"),  scale = 0.7, width = 12, height = 10)
+  if(runONScalib){
+    tmptab[, `:=` (N = N * ONSwt, atrisk = atrisk * ONSwt)]
   }
+  tmptab <- tmptab[, .(N = sum(N), atrisk = sum(atrisk)),
+                   keyby = .(mc, year, gender, imd, agegrp5, agegrp10, agegrp_big, state)]
+  setkey(tmptab, mc, year, gender, imd, agegrp5, agegrp10, agegrp_big, state)
+  tmptab[, cumN := cumsum(N), keyby = .(mc, gender, imd, agegrp5, agegrp10, agegrp_big, state)]
+  # tmptab <- tmptab[year == 2049]
+  tmptab[, scenario := scenario]
+  bigtab_cf <- rbind(bigtab_cf, tmptab[, scenario := scenario])
+  rm(tmptab)
+  gc()
+
+  fwrite(bigtab_cf, outpt_pth_summary(paste0("cf_sum.csv.gz")), )
+  bigtab_cf[, imd := factor(imd)]
 
 
+  if(!runONScalib){
+    #Standardised
+    # # Standardising to esp
+    esp <- mk_esp()
+    strata <- c("mc","year", "gender", "imd", "agegrp5", "state")
+
+
+    cftabsum <- fn_stnd(bigtab_cf, strata)
+
+
+    outstrata <- c("mc", "year", "gender","imd", "state")
+    fn_sex_lbls(cftabsum)
+    d <- cftabsum[, .(cf = sum(N * wt_esp) / sum(popsize_wtd)*10000), keyby = eval(outstrata)] #doing it this way keeps the variable name as popsize
+    d <- fn_mc(d, outstrata, prbl, "outcome", "cf_") #this then gives the median and various uncertainty intervals as defined by prbl above
+    d[, state := factor(state,
+                        levels = c("Overall", "Healthy","IncCond", "BMM", "CMM"),
+                        labels = c("Overall", "Healthy","1 condition", "Basic\nmultimorbidity", "Complex\nmultimorbidity") )]
+
+    ggplot(d, aes(x = year, y = `cf_50%`, colour = imd)) +
+      geom_smooth(
+        linewidth = 0.5,
+        se = FALSE
+      ) +
+      facet_grid(state ~ gender) +
+      expand_limits(y = 0) +
+      scale_x_continuous(name = "Year") +
+      scale_y_continuous(name = "Age-standardised case-fatality") +
+      labs(colour = "IMD quintile")  +
+      guides(colour = guide_legend(reverse = FALSE), nrow = 1) +
+      scale_colour_manual(values = mypalette) +
+      theme(legend.position = "bottom")
+    if(plotsave){
+      ggsave2(filename = outpt_pth_summary("st_cf_imd.svg"),  scale = 0.7, width = 12, height = 10)
+    }
+  }
   bigtab_cf <- bigtab_cf[year == 2049]
 
   setkey(bigtab_cf, mc, gender, imd, agegrp_big)
@@ -1331,25 +1502,26 @@ if(ineq){
 
   fn_state_lbls(d)
 
-  mypalette <- brewer.pal(9, name = "GnBu")[2:9]
 
-  ggplot(d[ outcome == "sii"], aes(x = state, y = `outcome_50%`, fill = agegrp10)) +
+  ggplot(d[ outcome == "sii"], aes(x = state, y = `ineq_50%`, fill = agegrp10)) +
     geom_col(position = "dodge") +
+    geom_errorbar(aes(ymin =`ineq_2%`, ymax = `ineq_98%`, x = state),
+                  position = position_dodge(width=0.9),
+                  width = 0.5,
+                  linewidth = 0.2) +
     ylab("Absolute difference in prevalence") +
-    ylim(-10,15) +
+    ylim(-15,15) +
     xlab("State") +
     geom_hline(aes(yintercept = 0)) +#add x-axis at 0
     # ggtitle("Absolute inequalities in prevalence in 2049 by age-group") +
     labs(fill = "10-year\n age-group") +
-    scale_fill_manual(values = mypalette) +
-    theme(legend.position = "bottom", axis.title.x = element_text(size = 12)) +
-    guides(fill = guide_legend(nrow = 2))
-
-
+    scale_fill_manual(values = mypalette2) +
+    theme(legend.position = "bottom") +
+    guides(fill = guide_legend(nrow = 1))
 
   if(plotsave){
-    ggsave2(outpt_pth_summary("prvl_sii_2049.svg") , scale = 0.6, width = 14, height = 9)
-
+    ggsave2(outpt_pth("prvl_sii_2049.pdf") , scale = 0.7, width = 14, height = 8)
+    ggsave2(outpt_pth("prvl_sii_2049.png") , scale = 0.7, width = 14, height = 8)
   }
 
 }
