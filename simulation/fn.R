@@ -287,6 +287,35 @@ mk_pnl_intyr <- function(data){
 
 # Make a panel
 mk_pnl <- function(data, tt){
+  if("imd_orig" %in% names(data)){
+    inityr <-  data[, .(patient_id, gender, imd, imd_orig, region, yob, age = ageenter,
+                        init_year, init_state, max_year, mc)]
+  }else{
+    inityr <-  data[, .(patient_id, gender, imd, region, yob, age = ageenter,
+                        init_year, init_state, max_year, mc)]
+  }
+
+  inityr[init_state == "Healthy",
+         `:=`(state_incCond = 0L,
+              state_BMM = 0L,
+              state_CMM = 0L)]
+  inityr[init_state == "IncCond",
+         `:=`(state_incCond = 2L,
+              state_BMM = 0L,
+              state_CMM = 0L)]
+  inityr[init_state == "BMM",
+         `:=`(state_incCond = 2L,
+              state_BMM = 2L,
+              state_CMM = 0L)]
+  inityr[init_state == "CMM",
+         `:=`(state_incCond = 2L,
+              state_BMM = 2L,
+              state_CMM = 2L)]
+  inityr[, `:=` (year = init_year,
+                 new_pid = 1L,
+                 max_year = as.integer(round(max_year)))][,
+                                                          c("init_year", "init_state") := NULL]
+
   data[, c("ageenter", "healthy",  "incCond", "bmm", "cmm",
            "last_state", "state10y_sim",  "max_age",
             "bc") := NULL]
@@ -323,6 +352,9 @@ mk_pnl <- function(data, tt){
   pats[, c("init_state", "year_incCond", "year_BMM", "year_CMM") := NULL][
     , new_pid := 0L]
   gc()
+  pats <- rbind(pats, inityr)
+  setkey(pats, patient_id, year)
+  pats[, died := ifelse(year == max_year, 1L, 0L)] # adding a death marker
   pats
 }
 
@@ -511,9 +543,12 @@ setkeyv(dt, setdiff(outstrata, "mc")) #setkeyv is because the col names are in "
 
 
 
-process_results <- function(i){
+process_results <- function(i, imd_switch = FALSE){ #imd switch for scenario 5 where making everyone imd1
   sim_output <- run_sim(patients, ll, 41L + i)
   sim_output[, mc := i]
+  if(imd_switch == TRUE){
+    sim_output[, imd := imd_orig]
+  }
   print(paste0("completed iteration #",i))
   # fwrite(sim_output, outpt_pth(paste0("RAW/", scenario, "_sim_output_mc",i,".csv.gz")))
 
